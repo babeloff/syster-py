@@ -1,0 +1,126 @@
+= How to handle parse diagnostics
+:description: Iterate errors, annotate source text, format diagnostics, and catch ParseError.
+
+== Check whether a parse succeeded
+
+`SyntaxFile.has_errors()` returns `True` if the parser recorded any recoverable problems.
+Symbols are still available even when errors are present.
+
+[source,python]
+----
+import syster_py
+
+sf = syster_py.parse_sysml("package P { ??? }")
+if sf.has_errors():
+    print(f"{len(sf.errors())} diagnostic(s)")
+----
+
+== Iterate over diagnostics
+
+[source,python]
+----
+for d in sf.errors():
+    print(d.message)
+    print(f"  range: {d.start_line}:{d.start_col} – {d.end_line}:{d.end_col}")
+    print(f"  bytes: {d.start_offset}–{d.end_offset}")
+----
+
+All positions are *0-indexed*.
+Convert to the 1-indexed convention used by most editors and linters:
+
+[source,python]
+----
+def format_diagnostic(d: syster_py.ParseDiagnostic) -> str:
+    return f"{d.start_line + 1}:{d.start_col + 1}: error: {d.message}"
+
+for d in sf.errors():
+    print(format_diagnostic(d))
+----
+
+== Annotate source text with diagnostics
+
+[source,python]
+----
+def annotate(source: str, diagnostics: list[syster_py.ParseDiagnostic]) -> str:
+    lines  = source.splitlines()
+    output = []
+    diag_map: dict[int, list[syster_py.ParseDiagnostic]] = {}
+    for d in diagnostics:
+        diag_map.setdefault(d.start_line, []).append(d)
+
+    for lineno, line in enumerate(lines):
+        output.append(line)
+        for d in diag_map.get(lineno, []):
+            pointer = " " * d.start_col + "^" * max(1, d.end_col - d.start_col)
+            output.append(pointer + f"  {d.message}")
+    return "\n".join(output)
+
+source = "package P { ???garbage??? }"
+sf     = syster_py.parse_sysml(source)
+print(annotate(source, sf.errors()))
+----
+
+Output:
+
+----
+package P { ???garbage??? }
+            ^^  unexpected '??' in namespace body
+----
+
+== Handle the ParseError exception
+
+`ParseError` is only raised by `Database.parse_file()` when the parser produces no tree at all — an extremely unusual failure.
+Normal syntax errors appear as `ParseDiagnostic` objects on the returned `SyntaxFile`.
+
+[source,python]
+----
+import syster_py
+
+db = syster_py.Database()
+db.add_file(1, some_source)
+
+try:
+    sf = db.parse_file(1)
+except syster_py.ParseError as exc:
+    # Unrecoverable — the parser could not produce any tree.
+    print(f"Unrecoverable parse failure: {exc}")
+----
+
+Catching `ParseError` at the level of the free functions (`parse_sysml`, `parse_kerml`) is never necessary — those functions always succeed.
+
+== Build a structured diagnostic report
+
+[source,python]
+----
+from dataclasses import dataclass
+from pathlib import Path
+import syster_py
+
+@dataclass
+class FileReport:
+    path: Path
+    error_count: int
+    diagnostics: list[syster_py.ParseDiagnostic]
+
+def check_files(paths: list[Path]) -> list[FileReport]:
+    reports = []
+    for path in paths:
+        text = path.read_text(encoding="utf-8")
+        sf   = (syster_py.parse_sysml(text) if path.suffix == ".sysml"
+                else syster_py.parse_kerml(text))
+        reports.append(FileReport(
+            path        = path,
+            error_count = len(sf.errors()),
+            diagnostics = sf.errors(),
+        ))
+    return reports
+
+def summarise(reports: list[FileReport]) -> None:
+    total = sum(r.error_count for r in reports)
+    print(f"{total} error(s) in {len(reports)} file(s)")
+    for r in reports:
+        if r.diagnostics:
+            print(f"\n  {r.path}:")
+            for d in r.diagnostics:
+                print(f"    {d.start_line + 1}:{d.start_col + 1}: {d.message}")
+----

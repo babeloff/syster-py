@@ -1,0 +1,226 @@
+= HirSymbol
+:description: Reference for all HirSymbol attributes and kind values.
+:toc: left
+:toclevels: 2
+
+[source,python]
+----
+class syster_py.HirSymbol
+----
+
+A semantic symbol extracted from a SysML v2 or KerML model element.
+Returned by `SyntaxFile.symbols()` and `Database.file_symbols()`.
+
+The name "HIR" stands for _High-level Intermediate Representation_ — the layer above the raw syntax tree where elements have been resolved to named symbols with qualified names and relationships.
+
+Instances are frozen (all attributes are read-only) and are not constructible directly from Python.
+
+'''
+
+== Attributes
+
+=== Identity
+
+[cols="1,1,3",options="header"]
+|===
+| Attribute | Type | Description
+
+| `name` | `str` | Simple (unqualified) name as it appears in source.
+| `qualified_name` | `str` | Fully qualified name using `::` as separator, e.g. `VehicleModel::Wheel::rim`.
+| `element_id` | `str` | UUID-based stable identifier assigned by the SysML/KerML standard to each element.
+| `kind` | `str` | Display name of the element kind — see <<kind-values>> below.
+|===
+
+=== Location
+
+All positions are *0-indexed*.
+
+[cols="1,1,3",options="header"]
+|===
+| Attribute | Type | Description
+
+| `file_id` | `int` | The integer ID passed to `symbols()` or managed by `Database`.
+| `start_line` | `int` | 0-indexed line of the first character of the element declaration.
+| `start_col` | `int` | 0-indexed column of the first character.
+| `end_line` | `int` | 0-indexed line of the last character.
+| `end_col` | `int` | 0-indexed column of the last character.
+|===
+
+=== Documentation
+
+[cols="1,1,3",options="header"]
+|===
+| Attribute | Type | Description
+
+| `doc`
+| `str \| None`
+| The content of the `doc /* ... */` comment attached to the element, or `None` if absent or not yet extracted by the current syster-base version.
+|===
+
+=== Relationships
+
+[cols="1,1,3",options="header"]
+|===
+| Attribute | Type | Description
+
+| `supertypes`
+| `list[str]`
+| Qualified names of all directly specialised types (`:>` in SysML, `specializes` in KerML).
+  Empty list if no supertypes are declared.
+|===
+
+=== Modifiers
+
+[cols="1,1,3",options="header"]
+|===
+| Attribute | Type | Description
+
+| `is_public` | `bool` | `True` if the element is publicly visible (no `private` keyword).
+| `is_abstract` | `bool` | `True` if the element has the `abstract` modifier.
+| `is_variation` | `bool` | `True` if the element has the `variation` modifier (SysML v2 variation point).
+| `is_readonly` | `bool` | `True` if the usage has the `readonly` modifier.
+| `is_derived` | `bool` | `True` if the usage has the `derived` modifier.
+|===
+
+'''
+
+== `__repr__`
+
+[source,python]
+----
+repr(sym)
+# HirSymbol(name='Wheel', kind='Part def', file_id=1)
+----
+
+'''
+
+[#kind-values]
+== Kind values
+
+The `kind` attribute is the string returned by `SymbolKind::display()` in the syster-base crate.
+The table below lists the values observed for each SysML v2 and KerML element type.
+
+=== SysML v2 — Packages
+
+[cols="1,2",options="header"]
+|===
+| `kind` | SysML v2 construct
+
+| `"Package"` | `package`
+|===
+
+=== SysML v2 — Definitions
+
+[cols="1,2",options="header"]
+|===
+| `kind` | SysML v2 construct
+
+| `"Part def"` | `part def`
+| `"Item def"` | `item def`
+| `"Action def"` | `action def`
+| `"Port def"` | `port def`
+| `"Attribute def"` | `attribute def`
+| `"Connection def"` | `connection def`
+| `"Interface def"` | `interface def`
+| `"Allocation def"` | `allocation def`
+| `"Requirement def"` | `requirement def`
+| `"Constraint def"` | `constraint def`
+| `"State def"` | `state def`
+| `"Calc def"` | `calc def` / `calculation def`
+| `"Use case def"` | `use case def`
+| `"Analysis case def"` | `analysis case def`
+| `"Verification case def"` | `verification case def`
+| `"Occurrence def"` | `occurrence def`
+| `"View def"` | `view def`
+| `"Viewpoint def"` | `viewpoint def`
+| `"Rendering def"` | `rendering def`
+| `"Metadata def"` | `metadata def`
+|===
+
+=== SysML v2 — Usages (members)
+
+[cols="1,2",options="header"]
+|===
+| `kind` | SysML v2 construct
+
+| `"Part"` | `part` usage
+| `"Item"` | `item` usage
+| `"Action"` | `action` usage
+| `"Perform action"` | `perform` action usage
+| `"Port"` | `port` usage
+| `"Attribute"` | `attribute` usage
+| `"Connection"` | `connection` usage
+| `"Interface"` | `interface` usage
+| `"Allocation"` | `allocation` usage
+| `"Requirement"` | `requirement` usage
+| `"Satisfy requirement"` | `satisfy` requirement usage
+| `"Constraint"` | `constraint` usage
+| `"State"` | `state` usage
+| `"Exhibit state"` | `exhibit` state usage
+| `"Transition"` | `transition` usage
+| `"Succession"` | `succession` usage
+| `"Ref"` | `ref` usage
+| `"Occurrence"` | `occurrence` usage
+| `"Use case"` | `use case` usage
+| `"Include use case"` | `include` use case usage
+| `"Flow connection"` | `flow` connection usage
+|===
+
+=== KerML — Classifiers and Features
+
+KerML constructs map to SysML-like display strings in the current version:
+
+[cols="1,2",options="header"]
+|===
+| `kind` | KerML construct
+
+| `"Package"` | `package`
+| `"Attribute def"` | `datatype`
+| `"Part def"` | `class` / `struct`
+| `"Action def"` | `behavior` / `function`
+| `"Calc def"` | `function` (calculation)
+| `"Connection def"` | `assoc`
+|===
+
+=== Other
+
+[cols="1,2",options="header"]
+|===
+| `kind` | Meaning
+
+| `"Element"` | Generic/unrecognised element type
+| `"Import"` | `import` statement
+| `"Alias"` | `alias` declaration
+| `"Comment"` | `comment` or documentation comment
+| `"Dependency"` | `dependency` relationship
+|===
+
+'''
+
+== Example — inspect a symbol
+
+[source,python]
+----
+import syster_py
+
+source = """
+package Shapes {
+    abstract part def Shape {
+        doc /* Base shape type */
+    }
+    part def Circle :> Shape {
+        attribute radius : Real;
+    }
+}
+"""
+
+sf = syster_py.parse_sysml(source)
+for sym in sf.symbols(file_id=1):
+    if sym.name == "Circle":
+        print(f"name:          {sym.name}")
+        print(f"qualified:     {sym.qualified_name}")
+        print(f"kind:          {sym.kind}")
+        print(f"supertypes:    {sym.supertypes}")
+        print(f"is_abstract:   {sym.is_abstract}")
+        print(f"location:      {sym.start_line}:{sym.start_col}")
+----

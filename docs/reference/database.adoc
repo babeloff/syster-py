@@ -1,0 +1,212 @@
+= Database
+:description: Reference for the Database class providing Salsa-backed incremental parsing.
+:toc: left
+:toclevels: 2
+
+[source,python]
+----
+class syster_py.Database
+----
+
+A Salsa-backed incremental workspace for analysing multiple SysML v2 and KerML files together.
+Files are registered with integer IDs and their parse results are cached; only files whose source text has changed since the last call are re-parsed.
+
+`Database` is *unsendable* — instances must be created and used on the same OS thread.
+This constraint is inherited from the Salsa storage layer, which uses thread-local state internally.
+
+'''
+
+== Constructor
+
+[source,python]
+----
+db = syster_py.Database()
+----
+
+Creates an empty database with no registered files.
+
+'''
+
+== Methods
+
+=== `add_file`
+
+[source,python]
+----
+Database.add_file(file_id: int, text: str) -> None
+----
+
+Register a new source file.
+
+==== Parameters
+
+[cols="1,1,3",options="header"]
+|===
+| Name | Type | Description
+
+| `file_id`
+| `int`
+| A non-negative integer that uniquely identifies this file within the database.
+  You choose the value; common choices are sequential integers or `hash(str(path)) & 0xFFFFFF`.
+
+| `text`
+| `str`
+| The complete source text (SysML v2 or KerML).
+|===
+
+==== Raises
+
+* `KeyError` — if `file_id` is already registered.
+  Call `update_file()` to change the text of an existing file.
+
+'''
+
+=== `update_file`
+
+[source,python]
+----
+Database.update_file(file_id: int, text: str) -> None
+----
+
+Replace the source text of an already-registered file and record a new Salsa revision.
+The next call to `parse_file()` or `file_symbols()` for this file will recompute the result; calls for other files are unaffected.
+
+==== Parameters
+
+[cols="1,1,3",options="header"]
+|===
+| Name | Type | Description
+
+| `file_id` | `int` | The ID of the file to update.  Must already be registered.
+| `text` | `str` | The new source text.
+|===
+
+==== Raises
+
+* `KeyError` — if `file_id` is not registered.  Call `add_file()` first.
+
+'''
+
+=== `parse_file`
+
+[source,python]
+----
+Database.parse_file(file_id: int) -> SyntaxFile
+----
+
+Return the parsed link:syntax-file.adoc[`SyntaxFile`] for the registered file.
+
+Salsa caches the parse result keyed on the file's current revision.
+If the text has not changed since the last call, the cached `SyntaxFile` is returned without re-parsing.
+If `update_file()` has been called since the last parse, the file is re-parsed.
+
+==== Parameters
+
+[cols="1,1,3",options="header"]
+|===
+| Name | Type | Description
+
+| `file_id` | `int` | ID of a registered file.
+|===
+
+==== Returns
+
+A `SyntaxFile`.
+The language (SysML or KerML) is inferred from the content: files containing SysML keywords parse as SysML v2; files that follow the KerML grammar parse as KerML.
+Use `SyntaxFile.is_sysml()` / `is_kerml()` to check.
+
+==== Raises
+
+* `KeyError` — if `file_id` is not registered.
+* `ParseError` — only in the rare case that the underlying parser produces no tree at all (catastrophic failure).
+  Ordinary syntax errors are not raised; they appear in `SyntaxFile.errors()`.
+
+'''
+
+=== `file_symbols`
+
+[source,python]
+----
+Database.file_symbols(file_id: int) -> list[HirSymbol]
+----
+
+Return the semantic symbols extracted from the registered file.
+
+Internally this calls `parse_file` (which is Salsa-cached) and runs symbol extraction on the result.
+Parsing is only repeated when `update_file()` has been called; symbol extraction always runs on the current parse result.
+
+==== Parameters
+
+[cols="1,1,3",options="header"]
+|===
+| Name | Type | Description
+
+| `file_id` | `int` | ID of a registered file.
+|===
+
+==== Returns
+
+A list of link:hir-symbol.adoc[`HirSymbol`] in source order.
+
+==== Raises
+
+* `KeyError` — if `file_id` is not registered.
+* `ParseError` — see `parse_file()` above.
+
+'''
+
+=== `file_ids`
+
+[source,python]
+----
+Database.file_ids() -> list[int]
+----
+
+Return the IDs of all registered files, sorted in ascending order.
+
+'''
+
+== Caching semantics
+
+The Salsa engine tracks dependencies between computations:
+
+. When `add_file(fid, text)` is called, Salsa records the file text at revision 0.
+. When `update_file(fid, new_text)` is called, Salsa bumps the revision of the file's text input.
+. When `parse_file(fid)` is called, Salsa checks whether the text has a newer revision than the cached parse result.
+  If so, it re-parses; otherwise it returns the cached value instantly.
+. Other registered files are never touched when a single file is updated.
+
+This makes `Database` efficient for workloads such as language servers or CI pipelines where many files remain stable between requests.
+
+'''
+
+== Example
+
+[source,python]
+----
+import syster_py
+
+db = syster_py.Database()
+
+# Register files
+db.add_file(1, "package Wheels { part def Rim; part def Tire; }")
+db.add_file(2, "package Axle   { part def Shaft; }")
+
+# Initial parse
+for fid in db.file_ids():
+    syms = db.file_symbols(fid)
+    names = [s.name for s in syms]
+    print(f"file {fid}: {names}")
+# file 1: ['Wheels', 'Rim', 'Tire']
+# file 2: ['Axle', 'Shaft']
+
+# Simulate an editor change
+db.update_file(1, "package Wheels { part def Rim; part def Tire; part def Hub; }")
+
+updated = db.file_symbols(1)
+print([s.name for s in updated])   # ['Wheels', 'Rim', 'Tire', 'Hub']
+
+# File 2 is untouched — returned from cache
+cached = db.file_symbols(2)
+print([s.name for s in cached])    # ['Axle', 'Shaft']
+----

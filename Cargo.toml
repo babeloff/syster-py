@@ -1,0 +1,18 @@
+[package]
+name = "syster-py"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "_syster"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.29", features = ["extension-module"] }
+syster = { package = "syster-base", git = "https://github.com/jade-codes/syster-base" }
+salsa = "0.18"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

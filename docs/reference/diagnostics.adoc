@@ -1,0 +1,90 @@
+= ParseDiagnostic and ParseError
+:description: Reference for ParseDiagnostic attributes and ParseError exception.
+
+== `ParseDiagnostic`
+
+[source,python]
+----
+class syster_py.ParseDiagnostic
+----
+
+A single syntax error recorded by the error-recovering parser.
+Returned by `SyntaxFile.errors()`.
+
+All position values are *0-indexed* — line 0, column 0 is the first character of the file.
+Add 1 to each to get the 1-indexed values expected by most editors and linters.
+
+Instances are frozen (all attributes are read-only) and are not constructible directly from Python.
+
+=== Attributes
+
+[cols="1,1,3",options="header"]
+|===
+| Attribute | Type | Description
+
+| `message` | `str` | Human-readable error message from the parser.
+| `start_line` | `int` | 0-indexed line number of the first character of the error range.
+| `start_col` | `int` | 0-indexed column (byte offset within the line) of the first character.
+| `end_line` | `int` | 0-indexed line number of the last character of the error range.
+| `end_col` | `int` | 0-indexed column of the last character.
+| `start_offset` | `int` | Byte offset of the start of the error range within the source string.
+| `end_offset` | `int` | Byte offset of the end of the error range within the source string.
+|===
+
+The byte offsets satisfy:
+
+----
+source_text[start_offset:end_offset]  ==  offending token text
+----
+
+=== `__repr__`
+
+[source,python]
+----
+repr(d)
+# ParseDiagnostic(message="unexpected '??' in namespace body", start=0:12, end=0:14)
+----
+
+=== Example
+
+[source,python]
+----
+import syster_py
+
+sf = syster_py.parse_sysml("package P { ???garbage??? }")
+for d in sf.errors():
+    # 1-indexed display
+    line  = d.start_line + 1
+    col   = d.start_col  + 1
+    token = sf.source_text()[d.start_offset:d.end_offset]
+    print(f"{line}:{col}: {d.message!r}  (token: {token!r})")
+----
+
+'''
+
+== `ParseError`
+
+[source,python]
+----
+class syster_py.ParseError(Exception)
+----
+
+Raised exclusively by `Database.parse_file()` when the parser produces *no concrete syntax tree at all* — a catastrophic failure that is distinct from ordinary syntax errors.
+
+Under normal circumstances `ParseError` is never raised.
+The syster-base parser applies aggressive error-recovery to produce a partial tree for any input.
+`ParseError` can theoretically occur if the input triggers an internal parser invariant.
+
+=== When to catch it
+
+[source,python]
+----
+try:
+    sf = db.parse_file(fid)
+except syster_py.ParseError as exc:
+    # No tree was produced; cannot extract symbols.
+    log.error("unrecoverable parse failure: %s", exc)
+----
+
+Ordinary syntax errors (wrong token, unexpected keyword, etc.) are *not* raised as `ParseError`; they appear in `SyntaxFile.errors()`.
+Do not wrap `parse_sysml()` or `parse_kerml()` in a `try/except ParseError` block — those functions never raise it.

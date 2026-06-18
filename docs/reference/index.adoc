@@ -1,0 +1,43 @@
+= API Reference
+:description: Complete description of every class, function, and exception in syster_py.
+
+Complete description of every class, function, and exception in `syster_py`.
+
+== Module contents
+
+[source,python]
+----
+import syster_py
+
+syster_py.version()        # str
+syster_py.parse_sysml()    # (text: str) -> SyntaxFile
+syster_py.parse_kerml()    # (text: str) -> SyntaxFile
+
+syster_py.SyntaxFile       # parsed lossless CST
+syster_py.ParseDiagnostic  # single parse error with location
+syster_py.ParseError       # exception for unrecoverable failures
+syster_py.HirSymbol        # semantic model element
+syster_py.Database         # Salsa-backed incremental workspace
+----
+
+== Pages
+
+[cols="1,3",options="header"]
+|===
+| Page | Contents
+
+| link:functions.adoc[Functions]
+| `version`, `parse_sysml`, `parse_kerml`
+
+| link:syntax-file.adoc[SyntaxFile]
+| Parsed lossless CST
+
+| link:diagnostics.adoc[Diagnostics]
+| `ParseDiagnostic`, `ParseError`
+
+| link:hir-symbol.adoc[HirSymbol]
+| Semantic symbol with all fields
+
+| link:database.adoc[Database]
+| Incremental multi-file workspace
+|===

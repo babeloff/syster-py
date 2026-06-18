@@ -1,0 +1,324 @@
+= syster-py
+:toc: left
+:toc-title: Contents
+:toclevels: 2
+:source-highlighter: highlight.js
+:icons: font
+
+Python bindings for https://github.com/jade-codes/syster-base[syster-base] — a fast, lossless parser and semantic analyser for https://www.omg.org/spec/SysML/2.0[SysML v2] and https://www.omg.org/spec/KerML/1.0[KerML] written in Rust.
+
+[source,python]
+----
+import syster_py
+
+sf = syster_py.parse_sysml("package VehicleModel { part def Wheel; }")
+for sym in sf.symbols(file_id=1):
+    print(sym.kind, sym.qualified_name)
+# Package  VehicleModel
+# Part def VehicleModel::Wheel
+----
+
+== Features
+
+* *Lossless parsing* — the Concrete Syntax Tree preserves every byte of the source, including whitespace and comments.
+* *Error recovery* — the parser never aborts; it records diagnostics and continues, so partial results are always available.
+* *Semantic symbols* — extracts qualified names, UUIDs, source locations, supertypes, and modifiers for every declared element.
+* *Incremental workspace* — a Salsa-backed `Database` caches parse results per file; only changed files are re-parsed.
+* *Both languages* — SysML v2 (`.sysml`) and KerML (`.kerml`) in one package.
+
+== Installation
+
+=== With pixi (recommended)
+
+Add the package to your `pixi.toml`:
+
+[source,toml]
+----
+[dependencies]
+syster-py = "*"
+----
+
+Then run:
+
+[source,bash]
+----
+pixi install
+----
+
+=== From source with maturin
+
+[source,bash]
+----
+git clone https://github.com/jade-codes/syster-py
+cd syster-py
+pip install maturin
+maturin develop --release
+----
+
+Requires Rust ≥ 1.85 and Python ≥ 3.8.
+
+== Quick start
+
+=== Parse a SysML v2 model
+
+[source,python]
+----
+import syster_py
+
+source = """
+package VehicleModel {
+    abstract part def Vehicle {
+        part wheels : Wheel[4];
+        attribute mass : Real;
+    }
+    part def Wheel {
+        part rim  : Rim;
+        part tire : Tire;
+    }
+    part def Rim;
+    part def Tire;
+}
+"""
+
+sf = syster_py.parse_sysml(source)
+
+# Check for syntax errors
+if sf.has_errors():
+    for d in sf.errors():
+        print(f"{d.start_line + 1}:{d.start_col + 1}: {d.message}")
+
+# Extract semantic symbols
+for sym in sf.symbols(file_id=1):
+    print(f"{sym.kind:15} {sym.qualified_name}")
+----
+
+Output:
+
+----
+Package         VehicleModel
+Part def        VehicleModel::Vehicle
+Part            VehicleModel::Vehicle::wheels
+Attribute       VehicleModel::Vehicle::mass
+Part def        VehicleModel::Wheel
+Part            VehicleModel::Wheel::rim
+Part            VehicleModel::Wheel::tire
+Part def        VehicleModel::Rim
+Part def        VehicleModel::Tire
+----
+
+=== Parse a KerML model
+
+KerML uses `feature` to declare members inside classifiers:
+
+[source,python]
+----
+kf = syster_py.parse_kerml("""
+package PhysicsKernel {
+    datatype Mass;
+    datatype Length;
+    class RigidBody {
+        feature mass   : Mass;
+        feature height : Length;
+    }
+}
+""")
+assert kf.is_kerml() and not kf.has_errors()
+----
+
+=== Incremental multi-file workspace
+
+[source,python]
+----
+db = syster_py.Database()
+
+db.add_file(1, "package Wheels { part def Rim; part def Tire; }")
+db.add_file(2, "package Axle   { part def Shaft; }")
+
+# Parse and query each file
+for fid in db.file_ids():
+    syms = db.file_symbols(fid)
+    print(f"file {fid}: {[s.name for s in syms]}")
+# file 1: ['Wheels', 'Rim', 'Tire']
+# file 2: ['Axle', 'Shaft']
+
+# Update one file — only that file is re-parsed
+db.update_file(1, "package Wheels { part def Rim; part def Tire; part def Hub; }")
+print([s.name for s in db.file_symbols(1)])
+# ['Wheels', 'Rim', 'Tire', 'Hub']
+----
+
+== API overview
+
+[cols="1,3",options="header"]
+|===
+| Name | Description
+
+| `parse_sysml(text)` | Parse a SysML v2 source string; always returns a result.
+| `parse_kerml(text)` | Parse a KerML source string; always returns a result.
+| `SyntaxFile` | Lossless CST with error list, import extraction, and symbol extraction.
+| `ParseDiagnostic` | A single syntax error with message, 0-indexed line/col, and byte offsets.
+| `ParseError` | Exception raised only on catastrophic (unrecoverable) parse failure.
+| `HirSymbol` | Semantic element: name, qualified name, UUID, kind, location, supertypes, modifiers.
+| `Database` | Salsa-backed incremental workspace; caches parse results per file.
+| `version()` | Returns the extension version string.
+|===
+
+Full API documentation is in link:docs/reference/index.adoc[docs/reference/].
+
+=== `HirSymbol` — selected fields
+
+[source,python]
+----
+sym.name            # "Vehicle"
+sym.qualified_name  # "VehicleModel::Vehicle"
+sym.element_id      # UUID string (SysML standard identifier)
+sym.kind            # "Part def", "Package", "Attribute", …
+sym.file_id         # integer you passed to symbols() or Database
+sym.start_line      # 0-indexed line of declaration start
+sym.supertypes      # list of qualified names from :> specialisations
+sym.is_abstract     # bool
+sym.is_public       # bool
+sym.is_readonly     # bool
+sym.is_derived      # bool
+sym.is_variation    # bool
+----
+
+=== `ParseDiagnostic` — selected fields
+
+[source,python]
+----
+d.message       # "unexpected '??' in namespace body"
+d.start_line    # 0-indexed
+d.start_col     # 0-indexed
+d.end_line
+d.end_col
+d.start_offset  # byte offset into source_text()
+d.end_offset
+----
+
+== Documentation
+
+The full documentation follows the https://diataxis.fr[Diátaxis] framework and lives in the link:docs/[docs/] directory.
+
+[cols="1,3",options="header"]
+|===
+| Section | Contents
+
+| link:docs/tutorials/getting-started.adoc[Tutorial]
+| Step-by-step introduction: install, parse, diagnostics, symbols, workspace.
+
+| link:docs/how-to/parse-files.adoc[How-to: parse files]
+| Read from disk, dispatch by extension, extract imports, load order.
+
+| link:docs/how-to/handle-diagnostics.adoc[How-to: handle diagnostics]
+| Iterate errors, annotate source, catch `ParseError`.
+
+| link:docs/how-to/extract-symbols.adoc[How-to: extract symbols]
+| Filter by kind, find by name, traverse hierarchy, inspect supertypes.
+
+| link:docs/how-to/incremental-workspace.adoc[How-to: incremental workspace]
+| `Database` lifecycle, file-watching loop, aggregate across files.
+
+| link:docs/reference/index.adoc[API Reference]
+| All classes, methods, fields, and exceptions described in full.
+
+| link:docs/explanation/architecture.adoc[Explanation: architecture]
+| logos → rowan CST → Salsa HIR → pyo3/maturin; data-flow diagrams.
+
+| link:docs/explanation/sysml-kerml-primer.adoc[Explanation: SysML v2 & KerML]
+| Language concepts, syntax examples, comparison table.
+|===
+
+== Development
+
+=== Environment setup
+
+[source,bash]
+----
+git clone <this-repo>
+cd syster-py
+pixi install          # installs Python, maturin, and the Rust toolchain
+----
+
+=== Build tasks
+
+[source,bash]
+----
+pixi run develop      # compile and install editable (maturin develop --release)
+pixi run build        # produce a wheel in target/wheels/
+pixi run test         # quick import smoke test
+----
+
+=== Project layout
+
+----
+syster-py/
+├── Cargo.toml              Rust manifest (pyo3, syster-base, salsa)
+├── pyproject.toml          maturin build backend configuration
+├── pixi.toml               environment and task definitions
+├── src/
+│   └── lib.rs              pyo3 bindings
+├── python/
+│   └── syster_py/
+│       ├── __init__.py     public Python surface
+│       └── _syster.pyi     type stubs for IDE completion
+├── recipes/
+│   └── recipe.yaml         rattler-build conda recipe
+└── docs/                   Diátaxis documentation
+----
+
+=== Rust crate dependency
+
+The `syster-base` crate is consumed directly from its Git repository:
+
+[source,toml]
+----
+[dependencies]
+syster = { package = "syster-base", git = "https://github.com/jade-codes/syster-base" }
+----
+
+=== Conda package
+
+Build a conda package with https://github.com/prefix-dev/rattler-build[rattler-build]:
+
+[source,bash]
+----
+pixi run -- rattler-build build --recipe recipes/recipe.yaml
+----
+
+The recipe installs via `pip install . --no-build-isolation` which drives the maturin build backend with the conda-provided Rust compiler (`rust_linux-64`) and Python.
+
+== Architecture summary
+
+[plantuml]
+....
+@startuml
+skinparam backgroundColor transparent
+skinparam defaultFontSize 12
+skinparam rectangleBorderColor #555555
+
+rectangle "Source text" as SRC
+rectangle "Lossless CST (rowan)\n── SyntaxFile" as CST
+rectangle "Vec<HirSymbol>\n── flat list, source order" as SYMS
+rectangle "Cached parse results\n── Database (incremental)" as CACHE
+rectangle "Python extension module\n── _syster.so" as EXT
+
+SRC -down-> CST : logos + recursive descent
+CST -down-> SYMS : HIR symbol extractor
+SYMS -down-> CACHE : Salsa RootDatabase
+CACHE -down-> EXT : pyo3 / maturin
+@enduml
+....
+
+See link:docs/explanation/architecture.adoc[docs/explanation/architecture.adoc] for the full data-flow description.
+
+== License
+
+Licensed under either of
+
+* Apache License, Version 2.0 (link:LICENSE-APACHE[LICENSE-APACHE])
+* MIT License (link:LICENSE-MIT[LICENSE-MIT])
+
+at your option.
+
+The underlying https://github.com/jade-codes/syster-base[syster-base] crate is also licensed MIT.

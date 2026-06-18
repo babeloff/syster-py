@@ -1,0 +1,119 @@
+= How to parse SysML and KerML files from disk
+:description: Recipes for reading files, dispatching by extension, extracting imports, and resolving load order.
+
+== Parse a single file
+
+[source,python]
+----
+from pathlib import Path
+import syster_py
+
+path = Path("model.sysml")
+text = path.read_text(encoding="utf-8")
+sf   = syster_py.parse_sysml(text)
+----
+
+For KerML:
+
+[source,python]
+----
+path = Path("kernel.kerml")
+sf   = syster_py.parse_kerml(path.read_text(encoding="utf-8"))
+----
+
+== Dispatch by file extension
+
+[source,python]
+----
+from pathlib import Path
+import syster_py
+
+def parse_file(path: Path) -> syster_py.SyntaxFile:
+    text = path.read_text(encoding="utf-8")
+    match path.suffix.lower():
+        case ".sysml":
+            return syster_py.parse_sysml(text)
+        case ".kerml":
+            return syster_py.parse_kerml(text)
+        case _:
+            raise ValueError(f"Unknown extension: {path.suffix!r}")
+----
+
+== Parse all files in a directory tree
+
+[source,python]
+----
+from pathlib import Path
+import syster_py
+
+def load_directory(root: Path) -> dict[Path, syster_py.SyntaxFile]:
+    results = {}
+    for path in sorted(root.rglob("*")):
+        if path.suffix.lower() in {".sysml", ".kerml"}:
+            text = path.read_text(encoding="utf-8")
+            if path.suffix.lower() == ".sysml":
+                results[path] = syster_py.parse_sysml(text)
+            else:
+                results[path] = syster_py.parse_kerml(text)
+    return results
+----
+
+== Extract imports from a file
+
+`SyntaxFile.extract_imports()` returns the qualified names of any packages imported at the top of the file:
+
+[source,python]
+----
+sf = syster_py.parse_sysml("""
+import VehicleModel::*;
+import PhysicsKernel::Mass;
+
+package MyModel { }
+""")
+
+for imp in sf.extract_imports():
+    print(imp)
+# VehicleModel::*
+# PhysicsKernel::Mass
+----
+
+Use this to resolve load order when multiple files depend on each other:
+
+[source,python]
+----
+from pathlib import Path
+import syster_py
+
+def build_load_order(files: list[Path]) -> list[Path]:
+    """Return files sorted so that dependencies come before dependents."""
+    parsed   = {p: syster_py.parse_sysml(p.read_text()) for p in files}
+    imports  = {p: set(sf.extract_imports()) for p, sf in parsed.items()}
+    # simple topological sort (no cycle detection)
+    ordered, seen = [], set()
+
+    def visit(p: Path) -> None:
+        if p in seen:
+            return
+        seen.add(p)
+        for dep in files:
+            name = dep.stem
+            if any(name in i for i in imports.get(p, ())):
+                visit(dep)
+        ordered.append(p)
+
+    for p in files:
+        visit(p)
+    return ordered
+----
+
+== Retrieve original source text
+
+After parsing, the original source is always available regardless of errors:
+
+[source,python]
+----
+sf = syster_py.parse_sysml("package P { ??? }")
+print(sf.source_text())   # "package P { ??? }"
+----
+
+This is useful for displaying error context or round-trip verification.

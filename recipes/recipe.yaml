@@ -1,0 +1,85 @@
+schema_version: 1
+
+context:
+  version: "0.1.0"
+
+package:
+  name: syster-py
+  version: ${{ version }}
+
+source:
+  path: ..
+
+build:
+  number: 0
+  # pip drives the maturin build backend; --no-build-isolation ensures it
+  # uses the maturin already installed in the host environment rather than
+  # fetching from PyPI into a temporary virtualenv.
+  script:
+    - pip install . --no-deps --no-build-isolation -vv
+
+requirements:
+  build:
+    # Rust compiler (rustc + cargo) for the native extension.
+    - ${{ compiler('rust') }}
+  host:
+    - python
+    - pip
+    - maturin >=1.0,<2.0
+  run:
+    - python
+
+tests:
+  # 1. Verify the extension module imports cleanly.
+  - python:
+      imports:
+        - syster_py
+      pip_check: false
+
+  # 2. Functional smoke test of the public API surface.
+  - script:
+      - >-
+        python -c "
+        import syster_py;
+        sf = syster_py.parse_sysml('package Wheel { part def Rim; }');
+        assert not sf.has_errors(), sf.errors();
+        assert sf.is_sysml();
+        syms = sf.symbols(1);
+        assert any(s.name == 'Rim' for s in syms), syms;
+        "
+      - >-
+        python -c "
+        from syster_py import Database, ParseError, ParseDiagnostic, HirSymbol;
+        db = Database();
+        db.add_file(1, 'package P { part def A; }');
+        sf = db.parse_file(1);
+        assert not sf.has_errors();
+        syms = db.file_symbols(1);
+        assert any(s.name == 'A' for s in syms), syms;
+        db.update_file(1, 'package P { part def A; part def B; }');
+        syms2 = db.file_symbols(1);
+        assert any(s.name == 'B' for s in syms2), syms2;
+        "
+      - >-
+        python -c "
+        from syster_py import parse_sysml;
+        bad = parse_sysml('package Bad { ???garbage??? }');
+        assert bad.has_errors();
+        diags = bad.errors();
+        assert len(diags) > 0;
+        assert isinstance(diags[0], __import__('syster_py').ParseDiagnostic);
+        "
+
+about:
+  homepage: https://github.com/jade-codes/syster-base
+  repository: https://github.com/jade-codes/syster-base
+  license: MIT OR Apache-2.0
+  summary: Python bindings for the syster-base SysML v2 / KerML parser
+  description: |
+    A Python extension wrapping the syster-base Rust crate via maturin and pyo3.
+    Exposes SysML v2 and KerML parsing, semantic symbol extraction (HirSymbol),
+    and a Salsa-backed incremental Database for multi-file workspaces.
+
+extra:
+  recipe-maintainers:
+    - phreed

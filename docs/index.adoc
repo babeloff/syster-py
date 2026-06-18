@@ -1,0 +1,57 @@
+= syster-py
+:description: Python bindings for the syster-base SysML v2 / KerML parser
+
+Python bindings for *syster-base* — a fast, lossless parser and semantic analyser for https://www.omg.org/spec/SysML/2.0[SysML v2] and https://www.omg.org/spec/KerML/1.0[KerML] built in Rust.
+
+[source,python]
+----
+import syster_py
+
+sf = syster_py.parse_sysml("package VehicleModel { part def Wheel; }")
+for sym in sf.symbols(file_id=1):
+    print(sym.kind, sym.name)
+# Package  VehicleModel
+# Part def Wheel
+----
+
+== Documentation sections
+
+This documentation follows the https://diataxis.fr[Diátaxis] framework.
+
+[cols="1,3",options="header"]
+|===
+| Section | Purpose
+
+| link:tutorials/getting-started.adoc[Tutorials]
+| Step-by-step introduction — start here if you are new.
+
+| link:how-to/parse-files.adoc[How-to guides]
+| Recipes for specific tasks.
+
+| link:reference/index.adoc[Reference]
+| Complete API description.
+
+| link:explanation/architecture.adoc[Explanation]
+| Background on the design and underlying concepts.
+|===
+
+== Quick install
+
+[source,bash]
+----
+# inside a pixi workspace
+pixi add syster-py
+
+# or with pip after maturin develop
+pip install -e .
+----
+
+== Supported languages
+
+[cols="1,2,2",options="header"]
+|===
+| Language | File extensions | Parser entry point
+
+| SysML v2 | `.sysml` | `parse_sysml()`
+| KerML    | `.kerml` | `parse_kerml()`
+|===

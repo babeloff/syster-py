@@ -1,0 +1,207 @@
+= SysML v2 and KerML — a brief primer
+:description: Introduction to SysML v2 and KerML concepts with syntax examples and a comparison table.
+:toc: left
+:toclevels: 2
+
+== What is SysML v2?
+
+*SysML v2* (Systems Modeling Language, version 2) is an OMG standard for systems engineering modelling.
+It supersedes SysML v1 (which was a UML profile) with a purpose-built, textual syntax.
+SysML v2 is used to describe the structure, behaviour, requirements, and verification of engineered systems — aircraft, vehicles, satellites, medical devices, and so on.
+
+A SysML v2 file has the extension `.sysml`.
+
+== What is KerML?
+
+*KerML* (Kernel Modeling Language) is the mathematical foundation that SysML v2 is built on.
+It defines the primitive concepts (classifiers, features, connectors, behaviours) that SysML v2 specialises into domain-specific constructs.
+You can write KerML directly when you need the lower-level semantics.
+
+A KerML file has the extension `.kerml`.
+
+'''
+
+== Core SysML v2 concepts
+
+=== Packages
+
+A package is a namespace that groups related definitions and usages:
+
+[source,sysml]
+----
+package VehicleModel {
+    // definitions and usages go here
+}
+----
+
+Packages can be nested and can import from other packages:
+
+[source,sysml]
+----
+package Assembly {
+    import VehicleModel::*;
+    // ...
+}
+----
+
+=== Definitions
+
+A _definition_ introduces a reusable type.
+It is analogous to a class in object-oriented languages.
+
+[source,sysml]
+----
+part def Wheel {
+    part rim  : Rim;
+    part tire : Tire;
+}
+
+item def Cargo;
+action def Deploy;
+port def PowerSupply;
+----
+
+Definitions can specialise other definitions using `:>`:
+
+[source,sysml]
+----
+part def SportWheel :> Wheel {
+    attribute width : Real;
+}
+----
+
+Abstract definitions cannot be instantiated directly:
+
+[source,sysml]
+----
+abstract part def Shape;
+
+part def Circle :> Shape {
+    attribute radius : Real;
+}
+----
+
+=== Usages
+
+A _usage_ is a feature (member) inside a definition or another usage.
+Usages are typed by definitions:
+
+[source,sysml]
+----
+part def Vehicle {
+    part wheels : Wheel[4];      // part usage, multiplicity 4
+    attribute mass : Real;       // attribute usage
+    port supply : PowerSupply;   // port usage
+    action drive : Drive;        // action usage
+}
+----
+
+=== Requirements
+
+Requirements are first-class elements in SysML v2:
+
+[source,sysml]
+----
+requirement def SafetyReq {
+    doc /* The system shall not tip over under normal operating conditions. */
+    attribute maxTiltAngle : Real;
+}
+
+part def Vehicle {
+    satisfy SafetyReq;   // claim that Vehicle satisfies the requirement
+}
+----
+
+=== States
+
+State machines are expressed with `state def` and `state` usages:
+
+[source,sysml]
+----
+state def OperatingMode {
+    state idle;
+    state running;
+    state error;
+}
+----
+
+'''
+
+== Core KerML concepts
+
+KerML introduces the primitive types that SysML v2 is built from.
+
+=== Classifiers
+
+[source,kerml]
+----
+package PhysicsKernel {
+    datatype Mass;
+    datatype Length;
+    class RigidBody {
+        feature mass   : Mass;
+        feature height : Length;
+    }
+}
+----
+
+`class`, `struct`, `datatype`, `behavior`, `function`, and `assoc` are KerML classifiers.
+In the syster-py API they map to SysML-like `kind` strings (see the link:../reference/hir-symbol.adoc#kind-values[HirSymbol kind values table]).
+
+'''
+
+== How syster-py sees a model
+
+syster-py exposes two levels of the parsed model:
+
+=== Syntax level (`SyntaxFile`)
+
+The `SyntaxFile` is a lossless representation of the source text.
+Every token — including whitespace, comments, and error markers — is preserved.
+This makes it suitable for editor tooling, formatters, and round-trip workflows.
+
+[source,python]
+----
+sf = syster_py.parse_sysml("package P { part def Wheel; }")
+print(sf.source_text())    # returns the original string unchanged
+print(sf.has_errors())     # True/False
+----
+
+=== Semantic level (`HirSymbol`)
+
+`HirSymbol` represents a named element after it has been lifted out of the CST into a flat list with qualified names, UUIDs, source locations, and relationships:
+
+[source,python]
+----
+for sym in sf.symbols(file_id=1):
+    print(f"{sym.kind:15} {sym.qualified_name}")
+# Package         P
+# Part def        P::Wheel
+----
+
+The `element_id` field contains the UUID-based stable identifier that SysML v2 assigns to each element for cross-tool traceability.
+
+'''
+
+== Language comparison table
+
+[cols="1,2,2",options="header"]
+|===
+| Concept | SysML v2 | KerML
+
+| Namespace | `package` | `package`
+| Structural type | `part def` | `class`
+| Data type | `attribute def` | `datatype`
+| Behavioural type | `action def` | `behavior`
+| Association | `connection def` | `assoc`
+| File extension | `.sysml` | `.kerml`
+| Parse entry | `parse_sysml()` | `parse_kerml()`
+|===
+
+'''
+
+== Further reading
+
+* https://www.omg.org/spec/SysML/2.0[SysML v2 specification (OMG)]
+* https://www.omg.org/spec/KerML/1.0[KerML specification (OMG)]
+* https://github.com/jade-codes/syster-base[syster-base source (GitHub)]

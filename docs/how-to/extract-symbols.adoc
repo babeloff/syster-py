@@ -1,0 +1,172 @@
+= How to extract and query symbols
+:description: Filter by kind, find by name, traverse hierarchy, inspect supertypes, and merge across files.
+
+== Get all symbols from a parsed file
+
+`SyntaxFile.symbols(file_id)` returns every declared element as a flat list of `HirSymbol` objects.
+Pass any integer as `file_id` — it labels symbols with the origin file so they can be linked back when you merge results from multiple files.
+
+[source,python]
+----
+import syster_py
+
+source = """
+package VehicleModel {
+    abstract part def Vehicle {
+        part wheels : Wheel[4];
+        attribute mass : Real;
+    }
+    part def Wheel;
+}
+"""
+
+sf   = syster_py.parse_sysml(source)
+syms = sf.symbols(file_id=1)
+----
+
+== Filter by symbol kind
+
+The `kind` field is a display string such as `"Package"`, `"Part def"`, or `"Attribute"`.
+Filter by exact match or prefix:
+
+[source,python]
+----
+# All part definitions
+part_defs = [s for s in syms if s.kind == "Part def"]
+
+# All definitions (any kind ending in " def")
+definitions = [s for s in syms if s.kind.endswith(" def")]
+
+# All usages inside definitions
+usages = [s for s in syms if not s.kind.endswith("def") and s.kind != "Package"]
+----
+
+See the link:../reference/hir-symbol.adoc#kind-values[HirSymbol kind values table] for a complete list.
+
+== Find a symbol by name
+
+[source,python]
+----
+def find_by_name(syms: list[syster_py.HirSymbol], name: str
+                 ) -> syster_py.HirSymbol | None:
+    return next((s for s in syms if s.name == name), None)
+
+vehicle = find_by_name(syms, "Vehicle")
+if vehicle:
+    print(vehicle.qualified_name)   # VehicleModel::Vehicle
+----
+
+== Look up by qualified name
+
+[source,python]
+----
+by_qname = {s.qualified_name: s for s in syms}
+rim = by_qname.get("VehicleModel::Wheel")
+----
+
+== Traverse the containment hierarchy
+
+Symbols do not form a tree directly, but their `qualified_name` encodes the nesting using `::` as a separator.
+Reconstruct the parent from the qualified name:
+
+[source,python]
+----
+def parent_qname(sym: syster_py.HirSymbol) -> str | None:
+    parts = sym.qualified_name.rsplit("::", 1)
+    return parts[0] if len(parts) == 2 else None
+
+# Build a children map
+from collections import defaultdict
+children: dict[str | None, list[syster_py.HirSymbol]] = defaultdict(list)
+for s in syms:
+    children[parent_qname(s)].append(s)
+
+def print_tree(parent: str | None, indent: int = 0) -> None:
+    for sym in children.get(parent, []):
+        print("  " * indent + f"{sym.kind}: {sym.name}")
+        print_tree(sym.qualified_name, indent + 1)
+
+print_tree(None)
+----
+
+== Inspect supertypes
+
+[source,python]
+----
+source_typed = """
+package Shapes {
+    part def Shape;
+    part def Circle :> Shape {
+        attribute radius : Real;
+    }
+    part def Square :> Shape {
+        attribute side : Real;
+    }
+}
+"""
+
+sf2  = syster_py.parse_sysml(source_typed)
+for s in sf2.symbols(2):
+    if s.supertypes:
+        print(f"{s.name} :> {', '.join(s.supertypes)}")
+# Circle :> Shape
+# Square :> Shape
+----
+
+== Find abstract elements
+
+[source,python]
+----
+abstract_defs = [s for s in syms if s.is_abstract]
+----
+
+== Find public vs. private elements
+
+[source,python]
+----
+public  = [s for s in syms if s.is_public]
+private = [s for s in syms if not s.is_public]
+----
+
+== Locate a symbol in source
+
+Each `HirSymbol` carries 0-indexed start/end positions.
+Convert to a 1-indexed range for display:
+
+[source,python]
+----
+for sym in syms:
+    print(f"{sym.name}: lines {sym.start_line + 1}–{sym.end_line + 1}")
+----
+
+== Read the documentation comment
+
+`HirSymbol.doc` holds the content of an attached `doc /* ... */` block when the extractor populates it.
+In the current syster-base version the field is `None` for most elements; check before using it:
+
+[source,python]
+----
+for s in sf.symbols(1):
+    if s.doc is not None:
+        print(f"{s.name}: {s.doc.strip()}")
+----
+
+== Merge symbols from multiple files
+
+When you use `Database`, merge the symbol lists from several files into one searchable index:
+
+[source,python]
+----
+import syster_py
+
+db = syster_py.Database()
+db.add_file(1, "package Wheels { part def Rim; part def Tire; }")
+db.add_file(2, "package Axle   { part def Shaft; }")
+
+all_symbols = []
+for fid in db.file_ids():
+    all_symbols.extend(db.file_symbols(fid))
+
+by_name = {s.name: s for s in all_symbols}
+print(by_name["Rim"])
+----

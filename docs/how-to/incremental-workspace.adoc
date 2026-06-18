@@ -1,0 +1,145 @@
+= How to build an incremental multi-file workspace
+:description: Database lifecycle, file-watching loop, workspace membership, and aggregating symbols.
+
+`Database` is the right tool when you need to analyse more than one file, or when file content changes over time (e.g. in a language server or CI pipeline).
+It wraps a Salsa incremental computation engine so that only the files that actually changed are re-parsed.
+
+== Create a database and register files
+
+File IDs are arbitrary non-negative integers that you choose.
+A common convention is to use sequential integers or a hash of the file path.
+
+[source,python]
+----
+import syster_py
+from pathlib import Path
+
+db = syster_py.Database()
+
+db.add_file(1, "package Wheels { part def Rim; part def Tire; }")
+db.add_file(2, "package Axle   { part def Shaft; }")
+db.add_file(3, "package Engine { part def Block; part def Piston; }")
+----
+
+== Load files from disk
+
+[source,python]
+----
+from pathlib import Path
+import syster_py
+
+def load_workspace(paths: list[Path]) -> syster_py.Database:
+    db = syster_py.Database()
+    for fid, path in enumerate(paths, start=1):
+        db.add_file(fid, path.read_text(encoding="utf-8"))
+    return db
+----
+
+== Parse and query a file
+
+[source,python]
+----
+sf   = db.parse_file(1)
+syms = db.file_symbols(1)
+
+if sf.has_errors():
+    for d in sf.errors():
+        print(f"  {d.start_line + 1}:{d.start_col + 1} {d.message}")
+
+print([s.name for s in syms])
+----
+
+== Update a file and re-query
+
+Call `update_file` whenever the source text changes.
+Salsa records a new revision; the next call to `parse_file` or `file_symbols` on that file re-parses it automatically.
+Other files are not touched.
+
+[source,python]
+----
+# Editor saves a new version of file 1
+new_text = "package Wheels { part def Rim; part def Tire; part def Hub; }"
+db.update_file(1, new_text)
+
+updated_syms = db.file_symbols(1)
+print([s.name for s in updated_syms])
+# ['Wheels', 'Rim', 'Tire', 'Hub']
+
+# File 2 is unchanged — result comes from cache
+syms2 = db.file_symbols(2)
+----
+
+== Reflect workspace membership changes
+
+[source,python]
+----
+# List registered file IDs at any time
+print(db.file_ids())   # [1, 2, 3]
+----
+
+`Database` does not expose `remove_file`.
+If you need to drop a file, create a new `Database` and re-register only the files that remain.
+Because the Rust Salsa engine caches by file identity, re-registering an existing path with a new ID is safe — it simply creates a new independent entry.
+
+== Implement a file-watching loop
+
+[source,python]
+----
+import time
+from pathlib import Path
+import syster_py
+
+def watch(paths: list[Path]) -> None:
+    db       = syster_py.Database()
+    mtimes   = {}
+    path_ids = {p: i for i, p in enumerate(paths, start=1)}
+
+    for path, fid in path_ids.items():
+        db.add_file(fid, path.read_text("utf-8"))
+        mtimes[path] = path.stat().st_mtime
+
+    while True:
+        time.sleep(0.5)
+        for path, fid in path_ids.items():
+            mtime = path.stat().st_mtime
+            if mtime != mtimes[path]:
+                db.update_file(fid, path.read_text("utf-8"))
+                mtimes[path] = mtime
+                syms = db.file_symbols(fid)
+                print(f"{path.name} changed: {len(syms)} symbols")
+----
+
+== Aggregate symbols across all files
+
+[source,python]
+----
+all_syms = [s for fid in db.file_ids() for s in db.file_symbols(fid)]
+by_kind  = {}
+for s in all_syms:
+    by_kind.setdefault(s.kind, []).append(s)
+
+for kind, group in sorted(by_kind.items()):
+    print(f"{kind}: {len(group)}")
+----
+
+== Error handling
+
+`add_file` raises `KeyError` if the ID is already registered:
+
+[source,python]
+----
+try:
+    db.add_file(1, "package Duplicate {}")
+except KeyError:
+    db.update_file(1, "package Duplicate {}")
+----
+
+`parse_file` and `file_symbols` raise `KeyError` for unknown IDs, and `ParseError` only on a catastrophic unrecoverable failure (not for ordinary syntax errors):
+
+[source,python]
+----
+try:
+    sf = db.parse_file(99)
+except KeyError:
+    print("file_id 99 is not registered")
+----

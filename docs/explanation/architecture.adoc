@@ -1,0 +1,185 @@
+= Architecture — from Rust crate to Python API
+:description: How syster-base layers (logos, rowan, Salsa, pyo3/maturin) compose into the syster-py Python extension.
+:toc: left
+:toclevels: 2
+
+== Overview
+
+syster-py is a thin pyo3 bridge over *syster-base*, a Rust crate that provides a complete parsing and semantic analysis pipeline for SysML v2 and KerML.
+The pipeline has three layers:
+
+[plantuml]
+....
+@startuml
+skinparam backgroundColor transparent
+skinparam defaultFontSize 12
+skinparam rectangleBorderColor #555555
+skinparam noteBorderColor #888888
+
+rectangle "Source text" as SRC
+
+rectangle "Layer 1 — Lexer / Parser\n\n  logos lexer\n  Recursive descent parser\n  Rowan lossless CST" as PARSE
+
+rectangle "Layer 2 — Semantic Analysis\n\n  HIR symbol extractor\n  Salsa incremental cache\n  RootDatabase" as HIR
+
+rectangle "Layer 3 — Python Bridge\n\n  pyo3 / maturin bridge\n  syster_py extension module" as PYO
+
+note right of PARSE : → SyntaxFile
+note right of HIR : → HirSymbol list\n   Database
+note right of PYO : → Python API
+
+SRC -down-> PARSE
+PARSE -down-> HIR
+HIR -down-> PYO
+@enduml
+....
+
+'''
+
+== Layer 1 — Lexer and lossless parser
+
+=== Lexer (logos)
+
+The https://github.com/maciejhirsz/logos[logos] crate generates the tokeniser from regular-expression annotations on an enum.
+It is fast (linear in the length of the input, with no backtracking) and produces a token stream that includes every byte of the source, including whitespace and comments.
+
+=== Parser
+
+The syster-base parser is a hand-written recursive descent parser over the logos token stream.
+It produces a *lossless* Concrete Syntax Tree (CST) rather than a lossy Abstract Syntax Tree (AST).
+
+=== Lossless CST (rowan)
+
+The https://github.com/rust-analyzer/rowan[rowan] library (also used by rust-analyzer) stores the CST as an immutable, reference-counted tree of green nodes.
+Because every token — including whitespace, comments, and error nodes — is preserved, the original source text can always be reconstructed exactly from the tree.
+This is why `SyntaxFile.source_text()` always returns the input unchanged.
+
+=== Error recovery
+
+When the parser encounters an unexpected token it does not abort.
+It inserts an error node into the CST, records a `SyntaxError` (exposed to Python as `ParseDiagnostic`), and attempts to resynchronise at the next recognisable boundary.
+The result is that even heavily broken files produce a usable tree and a non-empty symbol list.
+
+'''
+
+== Layer 2 — Semantic analysis (HIR)
+
+=== High-level Intermediate Representation
+
+After parsing, the HIR layer walks the CST and extracts `HirSymbol` objects.
+Each symbol carries:
+
+* identity (`name`, `qualified_name`, `element_id`)
+* source location (line/column)
+* semantic metadata (kind, supertypes, modifiers, doc comment)
+* relationship lists (supertypes, constraints, etc.)
+
+The HIR does not perform full type resolution or cross-file name binding; it extracts what is knowable from a single file without any imports resolved.
+Cross-file relationships (resolving `part wheels : Wheel[4]` to the `Wheel` definition in another file) are not yet reflected in the Python API.
+
+=== Salsa incremental computation
+
+https://github.com/salsa-rs/salsa[Salsa] is an incremental computation framework (the same engine used inside rust-analyzer).
+It represents computations as a graph of _queries_:
+
+* *Input*: `FileText` — the source text of one file.
+* *Tracked*: `parse_file(db, file_text)` — parses the text, caches the result.
+
+When a file's text changes via `Database.update_file()`, Salsa records a new _revision_ for that input.
+The next time a tracked query is called with that input, Salsa detects the newer revision and recomputes.
+Queries for unchanged files are served from cache.
+
+This is what makes `Database` efficient: parsing is O(changed files), not O(total files).
+
+=== RootDatabase
+
+`syster::hir::RootDatabase` is the Salsa database struct.
+It holds an internal `Storage<Self>` that manages the revision counter and the per-file result cache.
+Each `FileText` input is a lightweight handle (a Salsa entity ID) rather than a copy of the text.
+
+'''
+
+== Layer 3 — pyo3 / maturin bridge
+
+=== maturin
+
+https://github.com/PyO3/maturin[maturin] is the build tool.
+It compiles the Rust library crate (`crate-type = ["cdylib"]`) into a platform-native shared library and packages it as a Python wheel.
+The extension module is named `_syster` and lives inside the `syster_py` Python package alongside a pure-Python `__init__.py` that re-exports everything under the `syster_py` namespace.
+
+=== pyo3
+
+https://pyo3.rs[pyo3] provides the FFI bindings between Rust and the CPython C API:
+
+* `#[pyclass]` — exposes a Rust struct as a Python class
+* `#[pymethods]` — exposes Rust methods as Python methods
+* `#[pyfunction]` — exposes a Rust function
+* `create_exception!` — creates a Python exception class
+
+The Python objects (`SyntaxFile`, `HirSymbol`, `Database`, `ParseDiagnostic`) are thin wrappers that hold their Rust counterparts by value.
+`HirSymbol` and `ParseDiagnostic` are `frozen` (immutable from Python) which allows pyo3 to skip the per-instance mutex.
+
+=== Thread safety
+
+`Database` is marked `unsendable` in pyo3, meaning it can only be used on the thread that created it.
+This is because the underlying Salsa `Storage` uses `RefCell` (thread-local mutation) internally, which is `!Sync`.
+The restriction mirrors how `RootDatabase` is used in rust-analyzer: one database per thread (or per-process for simple scripts).
+
+=== Memory model
+
+`SyntaxFile` wraps a `syster::syntax::SyntaxFile` value, which in turn holds a rowan `GreenNode` (`Arc`-backed) and a `Vec<SyntaxError>`.
+Cloning a `SyntaxFile` is cheap because it shares the CST via the `Arc`.
+
+`HirSymbol` is a plain struct of `String` / `Vec<String>` / `bool` fields.
+Each call to `symbols()` clones the symbols from the Rust side into Python heap objects.
+For large models with thousands of symbols this is measurable; use `Database.file_symbols()` if you query the same file repeatedly, as the parse step is cached.
+
+'''
+
+== Data flow for a `parse_sysml` call
+
+[plantuml]
+....
+@startuml
+skinparam backgroundColor transparent
+
+participant "Python" as PY
+participant "pyo3 bridge" as PYO3
+participant "syster::syntax" as SYN
+participant "logos + rowan" as LEXPARSE
+
+PY -> PYO3 : parse_sysml("…")
+note right : &str, zero-copy
+PYO3 -> SYN : SyntaxFile::sysml(text)
+SYN -> LEXPARSE : tokenise + build CST
+LEXPARSE --> SYN : GreenNode + Vec<SyntaxError>
+SYN --> PYO3 : SyntaxFile
+PYO3 --> PY : SyntaxFile (PyCell)
+@enduml
+....
+
+== Data flow for a `Database.file_symbols` call
+
+[plantuml]
+....
+@startuml
+skinparam backgroundColor transparent
+
+participant "Python" as PY
+participant "pyo3 bridge" as PYO3
+participant "Salsa\nRootDatabase" as SALSA
+participant "HIR extractor" as HIR
+
+PY -> PYO3 : db.file_symbols(1)
+PYO3 -> SALSA : parse_file(db, file_text)
+alt text unchanged
+    SALSA --> PYO3 : cached ParseResult
+else text changed
+    SALSA -> SALSA : re-parse
+    SALSA --> PYO3 : new ParseResult
+end
+PYO3 -> HIR : file_symbols(FileId(1), sf)
+HIR --> PYO3 : Vec<HirSymbol>
+PYO3 --> PY : list[HirSymbol]
+@enduml
+....

@@ -1,0 +1,60 @@
+[workspace]
+authors = ["Fredrick Eisele <fred.eisele@vanderbilt.edu>"]
+channels = ["https://prefix.dev/meso-forge", "conda-forge"]
+name = "syster-py"
+platforms = ["linux-64"]
+version = "0.1.0"
+
+[tasks.develop]
+cmd = "maturin develop --release"
+inputs = [
+  "src/**/*.rs",
+  "Cargo.toml",
+  "Cargo.lock",
+  "pyproject.toml",
+  "python/syster_py/__init__.py",
+  "python/syster_py/_syster.pyi",
+]
+outputs = [".pixi/envs/default/lib/python*/site-packages/syster_py/_syster*.so"]
+
+[tasks.build]
+cmd = "maturin build --release"
+inputs = [
+  "src/**/*.rs",
+  "Cargo.toml",
+  "Cargo.lock",
+  "pyproject.toml",
+  "python/syster_py/__init__.py",
+  "python/syster_py/_syster.pyi",
+]
+outputs = ["target/wheels/*.whl"]
+
+[tasks.test]
+cmd = "python -c 'import syster_py; print(syster_py.__version__)'"
+depends-on = ["develop"]
+
+[tasks.package]
+cmd = "rattler-build build --recipe recipes/recipe.yaml --output-dir $HOME/.pixi/channels/local"
+inputs = [
+  "src/**/*.rs",
+  "Cargo.toml",
+  "Cargo.lock",
+  "pyproject.toml",
+  "python/syster_py/__init__.py",
+  "python/syster_py/_syster.pyi",
+  "recipes/recipe.yaml",
+]
+outputs = ["$HOME/.pixi/channels/local/linux-64/*.conda"]
+
+[tasks.index-channel]
+cmd = "mkdir -p $HOME/.pixi/channels/local && rattler-index fs $HOME/.pixi/channels/local"
+depends-on = ["package"]
+inputs  = ["$HOME/.pixi/channels/local/linux-64/*.conda"]
+outputs = ["$HOME/.pixi/channels/local/linux-64/repodata.json"]
+
+[dependencies]
+python = ">=3.13,<4"
+maturin = ">=1.0,<2.0"
+rust = ">=1.85"
+rattler-build = ">=0.66"
+rattler-index = ">=0.30"

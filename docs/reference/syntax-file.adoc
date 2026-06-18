@@ -1,0 +1,144 @@
+= SyntaxFile
+:description: Reference for the SyntaxFile class returned by the parse functions.
+
+[source,python]
+----
+class syster_py.SyntaxFile
+----
+
+A parsed SysML v2 or KerML source file represented as a lossless Concrete Syntax Tree (CST).
+Obtained from `parse_sysml()`, `parse_kerml()`, or `Database.parse_file()`.
+The CST preserves every byte of the original source, including whitespace and comments, so the text can always be recovered exactly.
+
+Instances are not constructible directly from Python.
+
+'''
+
+== Methods
+
+=== `is_sysml`
+
+[source,python]
+----
+SyntaxFile.is_sysml() -> bool
+----
+
+Returns `True` when the file was parsed as SysML v2, `False` for KerML.
+
+'''
+
+=== `is_kerml`
+
+[source,python]
+----
+SyntaxFile.is_kerml() -> bool
+----
+
+Returns `True` when the file was parsed as KerML, `False` for SysML v2.
+
+'''
+
+=== `has_errors`
+
+[source,python]
+----
+SyntaxFile.has_errors() -> bool
+----
+
+Returns `True` if the parser recorded one or more syntax errors during parsing.
+The CST and its symbols are still available even when this returns `True` because the parser uses error-recovery to continue past mistakes.
+
+'''
+
+=== `errors`
+
+[source,python]
+----
+SyntaxFile.errors() -> list[ParseDiagnostic]
+----
+
+Returns the list of all link:diagnostics.adoc[`ParseDiagnostic`] objects recorded during parsing.
+The list is empty when `has_errors()` is `False`.
+
+Each diagnostic carries the error message plus the start and end positions of the offending token or range, both as 0-indexed line/column pairs and as byte offsets within the source string.
+
+'''
+
+=== `source_text`
+
+[source,python]
+----
+SyntaxFile.source_text() -> str
+----
+
+Returns the original source string as it was passed to `parse_sysml` or `parse_kerml`.
+The return value is always identical to the input — no normalisation is applied.
+
+'''
+
+=== `extract_imports`
+
+[source,python]
+----
+SyntaxFile.extract_imports() -> list[str]
+----
+
+Returns the qualified names of all `import` statements at the top level of the file.
+Imports nested inside a package body are not included.
+
+[source,python]
+----
+sf = syster_py.parse_sysml("""
+import Base::*;
+import Physics::Mass;
+
+package MyModel { }
+""")
+print(sf.extract_imports())   # ['Base::*', 'Physics::Mass']
+----
+
+Returns an empty list if the file contains no imports.
+
+'''
+
+=== `symbols`
+
+[source,python]
+----
+SyntaxFile.symbols(file_id: int) -> list[HirSymbol]
+----
+
+Extracts all semantic symbols declared in this file and returns them as a flat list of link:hir-symbol.adoc[`HirSymbol`] objects.
+
+==== Parameters
+
+[cols="1,1,3",options="header"]
+|===
+| Name | Type | Description
+
+| `file_id`
+| `int`
+| An arbitrary non-negative integer you assign to identify this file within your application.
+  The value is stored in every returned `HirSymbol.file_id` so you can trace symbols back to their source.
+|===
+
+==== Returns
+
+A list of `HirSymbol` in source order (top-level elements first, then nested elements).
+It is never `None`; an empty file returns an empty list.
+
+==== Notes
+
+* Symbols are extracted even when `has_errors()` is `True`.
+* This method re-runs extraction on every call.
+  If you need to call it repeatedly for the same file, use link:database.adoc[`Database.file_symbols()`] which caches the parse step via Salsa.
+
+'''
+
+== `__repr__`
+
+[source,python]
+----
+repr(sf)
+# SyntaxFile(language="SysML", errors=0)
+----

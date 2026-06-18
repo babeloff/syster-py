@@ -1,0 +1,212 @@
+= Getting started with syster-py
+:description: Install syster-py, parse a SysML model, read diagnostics, extract symbols, and build an incremental workspace.
+:toc: left
+:toclevels: 2
+
+This tutorial walks you through installing syster-py, parsing your first SysML model, reading diagnostics, extracting semantic symbols, and setting up an incremental multi-file workspace.
+By the end you will have a working script that analyses a small model and prints its structure.
+
+== Prerequisites
+
+* Python 3.8 or newer
+* https://pixi.sh[pixi] *or* a standard pip environment with maturin
+
+== Step 1 — Install
+
+=== With pixi (recommended)
+
+Add syster-py to your `pixi.toml`:
+
+[source,toml]
+----
+[dependencies]
+syster-py = "*"
+----
+
+Then run:
+
+[source,bash]
+----
+pixi install
+----
+
+=== From source
+
+[source,bash]
+----
+git clone https://github.com/jade-codes/syster-base  # only needed for context
+git clone <this-repo>
+cd syster-py
+pip install maturin
+maturin develop --release
+----
+
+Verify the installation:
+
+[source,python]
+----
+import syster_py
+print(syster_py.version())   # 0.1.0
+----
+
+== Step 2 — Parse a SysML model
+
+Create a file `tutorial.py` and add:
+
+[source,python]
+----
+import syster_py
+
+source = """
+package VehicleModel {
+    part def Vehicle {
+        part wheels : Wheel[4];
+        attribute mass : Real;
+    }
+    part def Wheel {
+        part rim : Rim;
+        part tire : Tire;
+    }
+    part def Rim;
+    part def Tire;
+}
+"""
+
+sf = syster_py.parse_sysml(source)
+print(f"Parsed: is_sysml={sf.is_sysml()}, has_errors={sf.has_errors()}")
+----
+
+`parse_sysml` always returns a `SyntaxFile`.
+The parser is error-recovering, so you receive a result even when the source has mistakes — errors are recorded inside the object rather than raised as exceptions.
+
+== Step 3 — Inspect parse diagnostics
+
+Extend `tutorial.py` to check for problems:
+
+[source,python]
+----
+if sf.has_errors():
+    for d in sf.errors():
+        print(f"  line {d.start_line}, col {d.start_col}: {d.message}")
+else:
+    print("No parse errors.")
+----
+
+All positions are *0-indexed*.
+To display them as 1-indexed (as most editors do), add 1 to `start_line` and `start_col`:
+
+[source,python]
+----
+for d in sf.errors():
+    line = d.start_line + 1
+    col  = d.start_col  + 1
+    print(f"  {line}:{col} — {d.message}")
+----
+
+== Step 4 — Extract semantic symbols
+
+Every element declared in a model becomes a `HirSymbol`.
+Add a `file_id` integer — any value you choose — to identify this parse within your workspace:
+
+[source,python]
+----
+FILE_ID = 1
+symbols = sf.symbols(file_id=FILE_ID)
+
+for sym in symbols:
+    indent = "  " if "::" in sym.qualified_name else ""
+    print(f"{indent}{sym.kind:15} {sym.name}")
+----
+
+Expected output:
+
+----
+Package         VehicleModel
+  Part def      Vehicle
+  Part          wheels
+  Attribute     mass
+  Part def      Wheel
+  Part          rim
+  Part          tire
+  Part def      Rim
+  Part def      Tire
+----
+
+Each `HirSymbol` carries rich metadata.
+Explore a specific symbol:
+
+[source,python]
+----
+vehicle = next(s for s in symbols if s.name == "Vehicle")
+print(f"name:           {vehicle.name}")
+print(f"qualified_name: {vehicle.qualified_name}")
+print(f"element_id:     {vehicle.element_id}")
+print(f"kind:           {vehicle.kind}")
+print(f"location:       line {vehicle.start_line}, col {vehicle.start_col}")
+print(f"is_abstract:    {vehicle.is_abstract}")
+print(f"supertypes:     {vehicle.supertypes}")
+----
+
+== Step 5 — KerML
+
+KerML is the kernel language that underlies SysML v2.
+Parse it the same way using `parse_kerml`:
+
+[source,python]
+----
+kerml_source = """
+package PhysicsKernel {
+    datatype Mass;
+    datatype Length;
+    class RigidBody {
+        feature mass   : Mass;
+        feature height : Length;
+    }
+}
+"""
+
+kf = syster_py.parse_kerml(kerml_source)
+print(f"KerML parsed: has_errors={kf.has_errors()}")
+for sym in kf.symbols(file_id=2):
+    print(f"  {sym.kind:15} {sym.name}")
+----
+
+== Step 6 — Incremental multi-file workspace
+
+For projects with multiple files, use `Database`.
+It wraps a Salsa incremental computation engine so that re-parsing only happens when a file's text actually changes.
+
+[source,python]
+----
+db = syster_py.Database()
+
+# Register files with IDs you control (e.g. path hashes or sequential ints).
+db.add_file(1, "package Wheels { part def Rim; part def Tire; }")
+db.add_file(2, "package Axle { part def Shaft; }")
+
+# Parse and extract symbols for each file.
+for fid in db.file_ids():
+    sf   = db.parse_file(fid)
+    syms = db.file_symbols(fid)
+    print(f"File {fid}: {len(syms)} symbol(s), errors={sf.has_errors()}")
+
+# Simulate an editor change — only file 1 is re-parsed.
+db.update_file(1, "package Wheels { part def Rim; part def Tire; part def Hub; }")
+updated = db.file_symbols(1)
+print([s.name for s in updated])   # ['Wheels', 'Rim', 'Tire', 'Hub']
+----
+
+== What you have learned
+
+* `parse_sysml` / `parse_kerml` return a `SyntaxFile` that always has a result, even for broken input.
+* `SyntaxFile.errors()` returns `ParseDiagnostic` objects with 0-indexed line/column positions.
+* `SyntaxFile.symbols(file_id)` extracts `HirSymbol` objects carrying name, kind, location, and semantic metadata.
+* `Database` manages a multi-file workspace with automatic Salsa caching so unchanged files are never re-parsed.
+
+== Next steps
+
+* link:../how-to/parse-files.adoc[How-to: parse files from disk]
+* link:../how-to/handle-diagnostics.adoc[How-to: handle diagnostics]
+* link:../how-to/extract-symbols.adoc[How-to: extract and filter symbols]
+* link:../how-to/incremental-workspace.adoc[How-to: build an incremental workspace]
+* link:../reference/index.adoc[API Reference]
