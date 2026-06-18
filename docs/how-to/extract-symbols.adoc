@@ -151,6 +151,22 @@ for s in sf.symbols(1):
         print(f"{s.name}: {s.doc.strip()}")
 ----
 
+== Filter error-recovery placeholder symbols
+
+When the parser cannot fully parse a declaration it emits a synthetic `HirSymbol` whose name contains angle brackets, such as `<anon#1@l103>` or `<:String#2@L28>`.
+These are error-recovery artefacts and will cause problems if treated as real model elements (for example, writing them into generated code produces invalid identifiers).
+Filter them out before any downstream use:
+
+[source,python]
+----
+def is_real_symbol(sym: syster_py.HirSymbol) -> bool:
+    return '<' not in sym.name
+
+real_syms = [s for s in sf.symbols(file_id=1) if is_real_symbol(s)]
+----
+
+See the link:../reference/hir-symbol.adoc#known-limitations[known limitations] section of the `HirSymbol` reference for more details.
+
 == Merge symbols from multiple files
 
 When you use `Database`, merge the symbol lists from several files into one searchable index:

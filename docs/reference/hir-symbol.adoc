@@ -135,6 +135,7 @@ The table below lists the values observed for each SysML v2 and KerML element ty
 | `"Viewpoint def"` | `viewpoint def`
 | `"Rendering def"` | `rendering def`
 | `"Metadata def"` | `metadata def`
+| `"Enum def"` | `enum def`
 |===
 
 === SysML v2 — Usages (members)
@@ -194,6 +195,75 @@ KerML constructs map to SysML-like display strings in the current version:
 | `"Comment"` | `comment` or documentation comment
 | `"Dependency"` | `dependency` relationship
 |===
+
+'''
+
+== Known limitations
+
+=== Missing fields: direction and multiplicity
+
+`HirSymbol` does not expose two common feature properties:
+
+* *Direction* — the `in` / `out` / `inout` / `return` keyword on action parameters.
+* *Multiplicity* — the `[0..1]`, `[0..*]`, `[4]` etc. bracket expression on usages.
+
+Both are present in the source text but not yet extracted by syster-base into the HIR.
+The workaround is to read them from the source line via `SyntaxFile.source_text()`:
+
+[source,python]
+----
+import re
+
+def extract_direction(source: str, sym: syster_py.HirSymbol) -> str | None:
+    """Return 'in', 'out', 'inout', or 'return' if present on the symbol's source line."""
+    line = source.splitlines()[sym.start_line]
+    m = re.search(r'\b(in|out|inout|return)\b', line)
+    return m.group(1) if m else None
+
+def extract_mult(source: str, sym: syster_py.HirSymbol) -> str | None:
+    """Return the bracketed multiplicity string, e.g. '[0..*]', or None."""
+    line = source.splitlines()[sym.start_line]
+    m = re.search(r'\[([^\]]+)\]', line)
+    return m.group(0) if m else None
+----
+
+These are upstream API gaps — direction and multiplicity should be filed as feature requests against syster-base.
+
+=== Error-recovery placeholder names
+
+When the parser cannot fully parse a declaration it still emits a synthetic symbol whose name contains angle brackets, for example `<anon#1@l103>` or `<:String#2@L28>`.
+These are error-recovery artefacts and should not be treated as real model elements.
+Filter them before using the symbol list:
+
+[source,python]
+----
+def is_real_symbol(sym: syster_py.HirSymbol) -> bool:
+    return '<' not in sym.name
+
+real_syms = [s for s in sf.symbols(file_id=1) if is_real_symbol(s)]
+----
+
+This is a bug in syster-base — the placeholder names should not surface in the public `HirSymbol` list.
+
+=== `#Annotation{ }` metadata blocks before `use case def`
+
+Files that place inline `#TaskRef { ... }` (or similar `#Name { }` metadata) immediately before a `use case def` inside a package body cause syster-base 0.1.0 to fail to produce `"Use case def"` symbols for the entire file.
+The file still parses (no `ParseError` is raised) but the use-case symbols are silently absent.
+
+Detect affected files with a presence check:
+
+[source,python]
+----
+import re
+
+ANNOTATION_BEFORE_USECASE = re.compile(
+    r'#\w+\s*\{[^}]*\}\s*use\s+case\s+def', re.DOTALL)
+
+def has_annotation_usecase_bug(source: str) -> bool:
+    return bool(ANNOTATION_BEFORE_USECASE.search(source))
+----
+
+This is a parser bug — `#Annotation{ }` blocks before `use case def` in a package body should be handled without suppressing the following symbol.
 
 '''
 

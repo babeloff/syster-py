@@ -274,7 +274,7 @@ The `syster-base` crate is consumed directly from its Git repository:
 [source,toml]
 ----
 [dependencies]
-syster = { package = "syster-base", git = "https://github.com/jade-codes/syster-base" }
+syster = { package = "syster-base", version = "0.4.1-alpha" }
 ----
 
 === Conda package
